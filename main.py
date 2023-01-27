@@ -6,52 +6,35 @@ from torch import nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import torch
-
+from transformers import AutoTokenizer, AutoModel
+import psutil
+from dataset import get_data
 from model.model import Model
-
-df_ic50 = pd.read_csv('cleared_data/IC50_protein_compound_pair.tsv', delimiter='\t')
-df_uniprot = pd.read_csv('cleared_data/dpid_dom.tsv', delimiter='\t')
-df_compound = pd.read_csv('cleared_data/dcid_fingerprint.tsv', delimiter='\t')
-
-df = df_ic50.merge(df_uniprot, on='DeepAffinity Protein ID', how='left')
-df = df.merge(df_compound, on='DeepAffinity Compound ID', how='left')
-
-df['label'] = df['pIC50_[M]'] > 8
-df = df.iloc[:100]
-X_train, X_test, y_train, y_test = train_test_split(
-    df[['Domain Features', 'Fingerprint Feature']], df['label'], test_size=0.2, random_state=42)
-
-
-def str_to_series(x):
-    return np.array(list(x)).astype('float32')
-
-
-class MyDataset(Dataset):
-    def __init__(self, x, y):
-        self.x_1 = torch.tensor(np.stack(x['Fingerprint Feature'].map(str_to_series)))
-        self.x_2 = torch.tensor(np.stack(x['Domain Features'].map(str_to_series)))
-        self.y = torch.tensor(y.values, dtype=torch.long)
-
-    def __len__(self):
-        return len(self.y)
-
-    def __getitem__(self,idx):
-        return (self.x_1[idx], self.x_2[idx]), self.y[idx]
-
-
-train_ds = MyDataset(X_train, y_train)
-train_loader = DataLoader(train_ds, batch_size=64, shuffle=True)
-test_ds = MyDataset(X_test, y_test)
-test_loader = DataLoader(test_ds, batch_size=64, shuffle=False)
 
 classes = 2
 d_model = 64
-s_len_1 = 881
-s_len_2 = 16712
+s_len_1 = 512
+s_len_2 = 512
 n = 3
 heads = 2
 dropout = 0.1
-device = 'cpu'
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
+embedder = embed.UniRepEmbedder(device=device)
+tokenizer = AutoTokenizer.from_pretrained("seyonec/ChemBERTa-zinc-base-v1")
+
+def process_dataset(example):
+    example['seq_embed'] = embedder.embed_many(example['Sequence'])
+    return tokenizer(example['Canonical SMILE'], truncation=True, padding="max_length")
+
+
+dataset = get_data()
+
+dataset.map(process_dataset, batched=True)
+
+ex = dataset[0]
+
 
 model = Model(classes, d_model, s_len_1, s_len_2, n, heads, dropout, device)
 

@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as f
 from model.encoder import Encoder
 from model.initilizers import linear_init_with_he_normal, linear_init_with_lecun_normal
+from transformers import AutoTokenizer, AutoModel
 
 
 class Model(nn.Module):
@@ -20,7 +21,12 @@ class Model(nn.Module):
         self.out3 = linear_init_with_lecun_normal(nn.Linear(d_model // 4 * classes, classes)).to(device)
         self.dropout = nn.Dropout(dropout)
 
+        self.ligand_encoder = AutoModel.from_pretrained("seyonec/ChemBERTa-zinc-base-v1")
+        for param in self.ligand_encoder.parameters():
+            param.requires_grad = False
+
     def forward(self, x_1, x_2):
+        x_1 = self.ligand_encoder(x_1)
         x_1 = x_1.unsqueeze(-1)
         x_2 = x_2.unsqueeze(-1)
         x_1 = self.in1(x_1)
