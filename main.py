@@ -5,41 +5,57 @@ from sklearn.model_selection import train_test_split
 from torch import nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
+from torch.utils.data.sampler import BatchSampler, RandomSampler
 import torch
 from transformers import AutoTokenizer, AutoModel
 import psutil
-from dataset import get_data
 from model.model import Model
+from datasets import load_from_disk
+
+# don't change unless you know why
+SEED = 42
 
 classes = 2
 d_model = 64
-s_len_1 = 512
-s_len_2 = 512
+s_len_1 = 768
+s_len_2 = 1900
 n = 3
 heads = 2
 dropout = 0.1
+batch_size = 8
+
+def map_label(e):
+    if e['label'] == 1.0:
+        e['label'] = np.array([1.0, 0.0])
+    else:
+        e['label'] = np.array([0.0, 1.0])
+    return e
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-
-embedder = embed.UniRepEmbedder(device=device)
-tokenizer = AutoTokenizer.from_pretrained("seyonec/ChemBERTa-zinc-base-v1")
-
-def process_dataset(example):
-    example['seq_embed'] = embedder.embed_many(example['Sequence'])
-    return tokenizer(example['Canonical SMILE'], truncation=True, padding="max_length")
-
-
-dataset = get_data()
-
-dataset.map(process_dataset, batched=True)
-
-ex = dataset[0]
-
-
 model = Model(classes, d_model, s_len_1, s_len_2, n, heads, dropout, device)
+model.to(device)
+
+dataset = load_from_disk('dataset')
+tokenizer = AutoTokenizer.from_pretrained("seyonec/ChemBERTa-zinc-base-v1")
+dataset = dataset.map(map_label, batched=False)
+dataset = dataset.map(lambda e: tokenizer(e['Canonical SMILE'], truncation=True, padding='max_length'), batched=True)
+dataset.set_format(type='torch', columns=['input_ids', 'attention_mask', 'embedding', 'label'])
+
+dataset = dataset.train_test_split(test_size=0.1, seed=SEED)
+train = dataset['train']
+test = dataset['test']
+
+batch_sampler = BatchSampler(RandomSampler(train), batch_size=batch_size, drop_last=False)
+train_loader = DataLoader(train, batch_sampler=batch_sampler)
+
+test_loader = DataLoader(test, batch_size=batch_size)
+
+
+
 
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
+optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9, weight_decay=0.00001)
 
 losses = pd.DataFrame()
 epochs = 2
@@ -50,25 +66,20 @@ min_valid_loss = np.inf
 for e in range(epochs):
     train_loss = 0.0
     model.train()  # Optional when not using Model Specific layer
-    for data, labels in train_loader:
-        if torch.cuda.is_available():
-            (x_1, x_2), labels = data.cuda(), labels.cuda()
-
+    for batch in train_loader:
         optimizer.zero_grad()
-        target = model(*data)
-        loss = criterion(target, labels)
+        target = model(batch, device)
+        loss = criterion(target, batch['label'].to(device))
         loss.backward()
         optimizer.step()
         train_loss += loss.item()
 
     valid_loss = 0.0
     model.eval()  # Optional when not using Model Specific layer
-    for data, labels in test_loader:
-        if torch.cuda.is_available():
-            data, labels = data.cuda(), labels.cuda()
-
-        target = model(*data)
-        loss = criterion(target, labels)
+    for batch in test_loader:
+        batch.to(device)
+        target = model(batch)
+        loss = criterion(target, batch['label'])
         valid_loss = loss.item()
 
     losses = losses.append({'Train_Loss': train_loss, 'Test_Loss': valid_loss}, ignore_index=True)
