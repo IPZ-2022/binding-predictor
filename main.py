@@ -24,7 +24,7 @@ s_len_2 = 1900
 n = 3
 heads = 2
 dropout = 0.1
-batch_size = 4
+batch_size = 32
 
 def map_label(e):
     if e['label'] == 1.0:
