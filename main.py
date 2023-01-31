@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
@@ -10,7 +12,7 @@ import torch
 from transformers import AutoTokenizer, AutoModel
 import psutil
 from model.model import Model
-from datasets import load_from_disk
+from datasets import load_from_disk, Value
 
 # don't change unless you know why
 SEED = 42
@@ -22,7 +24,7 @@ s_len_2 = 1900
 n = 3
 heads = 2
 dropout = 0.1
-batch_size = 8
+batch_size = 4
 
 def map_label(e):
     if e['label'] == 1.0:
@@ -38,7 +40,8 @@ model.to(device)
 
 dataset = load_from_disk('dataset')
 tokenizer = AutoTokenizer.from_pretrained("seyonec/ChemBERTa-zinc-base-v1")
-dataset = dataset.map(map_label, batched=False)
+#dataset = dataset.map(map_label, batched=False)
+dataset = dataset.cast_column('label', Value("int32"))
 dataset = dataset.map(lambda e: tokenizer(e['Canonical SMILE'], truncation=True, padding='max_length'), batched=True)
 dataset.set_format(type='torch', columns=['input_ids', 'attention_mask', 'embedding', 'label'])
 
@@ -66,20 +69,25 @@ min_valid_loss = np.inf
 for e in range(epochs):
     train_loss = 0.0
     model.train()  # Optional when not using Model Specific layer
-    for batch in train_loader:
+    timep = time.process_time()
+    for iter, batch in enumerate(train_loader):
         optimizer.zero_grad()
         target = model(batch, device)
         loss = criterion(target, batch['label'].to(device))
         loss.backward()
         optimizer.step()
         train_loss += loss.item()
-
+        if iter % 1000 == 0:
+            print(f'Loss for iteration {iter} was {loss.item()}')
+        if iter % 100000 == 0:
+            torch.save(model.state_dict(), 'backup_model.pth')
+    timep = time.process_time() - timep
+    print(f"epoch took {timep//60} minutes and {round(timep)%60} seconds")
     valid_loss = 0.0
     model.eval()  # Optional when not using Model Specific layer
     for batch in test_loader:
-        batch.to(device)
-        target = model(batch)
-        loss = criterion(target, batch['label'])
+        target = model(batch, device)
+        loss = criterion(target, batch['label'].to(device))
         valid_loss = loss.item()
 
     losses = losses.append({'Train_Loss': train_loss, 'Test_Loss': valid_loss}, ignore_index=True)
