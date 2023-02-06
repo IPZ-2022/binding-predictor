@@ -18,4 +18,4 @@ binding to a given protein.
 - Each of the three files downloads all the data it requires independently, so you don't have to run through the whole pipeline.
 - data.py gives a commented-out example of how to calculate protein encoding for your own dataset, along with info on the 
 docker environment prepared for this task.
-- main.py is 
+- In case of any questions, please contact j.jozefowicz2@student.uw.edu.pl or submit an issue
